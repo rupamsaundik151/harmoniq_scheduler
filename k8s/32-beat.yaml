@@ -1,0 +1,50 @@
+# Celery Beat — MUST stay at replicas: 1.
+#
+# RedBeat acquires a Redis leader lock so multiple beat replicas would
+# not double-fire schedules (safe), but it's still wasted resource.
+# The lock also survives pod restarts; if the pod dies without
+# releasing it, another replica can take over after
+# `redbeat_lock_timeout` seconds (SchedulerConfig.redbeat_lock_timeout,
+# default 90s). During that window schedules pause — acceptable.
+#
+# strategy: Recreate ensures the old pod is fully torn down before the
+# new one starts, so the lock owner is always unambiguous.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler-beat
+  namespace: harmoniq-scheduler
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: scheduler-beat
+  template:
+    metadata:
+      labels:
+        app: scheduler-beat
+    spec:
+      containers:
+        - name: beat
+          image: harmoniq-scheduler:0.1.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - celery
+            - -A
+            - src.celery.celery_instance
+            - beat
+            - --loglevel=info
+          envFrom:
+            - configMapRef:
+                name: scheduler-config
+            - secretRef:
+                name: scheduler-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

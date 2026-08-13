@@ -1,0 +1,53 @@
+# Flower — Celery monitoring UI. Deploy behind auth in production
+# (it exposes broker internals). For the demo, port-forward:
+#   kubectl -n harmoniq-scheduler port-forward svc/flower 5555:5555
+apiVersion: v1
+kind: Service
+metadata:
+  name: flower
+  namespace: harmoniq-scheduler
+spec:
+  selector:
+    app: flower
+  ports:
+    - port: 5555
+      targetPort: 5555
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower
+  namespace: harmoniq-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower
+  template:
+    metadata:
+      labels:
+        app: flower
+    spec:
+      containers:
+        - name: flower
+          image: harmoniq-scheduler:0.1.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - celery
+            - -A
+            - src.celery.celery_instance
+            - flower
+            - --port=5555
+            - --broker=redis://redis:6379/3
+          ports:
+            - containerPort: 5555
+          envFrom:
+            - configMapRef:
+                name: scheduler-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

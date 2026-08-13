@@ -1,0 +1,105 @@
+# One-shot local stack for the generic scheduler.
+#
+#   docker compose up --build
+#
+# Services:
+#   postgres  — schedules metadata (source of truth)
+#   redis     — Celery broker + result backend + RedBeat schedule store
+#   api       — FastAPI: exposes /schedules CRUD
+#   worker    — Celery worker: executes dispatch_webhook tasks
+#   beat      — Celery beat: fires cron schedules; MUST stay at 1 replica
+#   flower    — Web UI for inspecting queues, workers, task history
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: scheduler
+      POSTGRES_PASSWORD: scheduler
+      POSTGRES_DB: scheduler
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scheduler -d scheduler"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scheduler:scheduler@postgres:5432/scheduler
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: INFO
+    ports:
+      - "8080:8080"
+
+  worker:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scheduler:scheduler@postgres:5432/scheduler
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: INFO
+    command: >
+      celery -A src.celery.celery_instance worker
+      --loglevel=info
+      --concurrency=4
+
+  beat:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scheduler:scheduler@postgres:5432/scheduler
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: INFO
+    # RedBeat holds a Redis leader lock — running more than one beat
+    # replica is safe but only one will actually fire schedules. Keep
+    # this at exactly 1 for clarity.
+    deploy:
+      replicas: 1
+    command: >
+      celery -A src.celery.celery_instance beat
+      --loglevel=info
+
+  flower:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "5555:5555"
+    command: >
+      celery -A src.celery.celery_instance flower
+      --port=5555
+      --broker=redis://redis:6379/3
+
+volumes:
+  postgres_data:

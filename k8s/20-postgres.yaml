@@ -1,0 +1,59 @@
+# StatefulSet for demo. Production should use a managed Postgres
+# (RDS / Cloud SQL) — do not run your primary DB inside the app cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: harmoniq-scheduler
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: harmoniq-scheduler
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: scheduler
+            - name: POSTGRES_PASSWORD
+              value: scheduler
+            - name: POSTGRES_DB
+              value: scheduler
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "scheduler", "-d", "scheduler"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

@@ -1,0 +1,72 @@
+# Celery workers — safe to scale horizontally. Each pod runs 4 worker
+# processes (--concurrency=4). If task throughput grows, either bump
+# replicas via the HPA below or raise --concurrency per pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler-worker
+  namespace: harmoniq-scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scheduler-worker
+  template:
+    metadata:
+      labels:
+        app: scheduler-worker
+    spec:
+      containers:
+        - name: worker
+          image: harmoniq-scheduler:0.1.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - celery
+            - -A
+            - src.celery.celery_instance
+            - worker
+            - --loglevel=info
+            - --concurrency=4
+          envFrom:
+            - configMapRef:
+                name: scheduler-config
+            - secretRef:
+                name: scheduler-secret
+          # Liveness probe: is the worker heartbeating to the broker?
+          # `celery inspect ping` returns 0 iff the worker responds.
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - celery -A src.celery.celery_instance inspect ping -d celery@$HOSTNAME
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 384Mi
+            limits:
+              cpu: 1000m
+              memory: 768Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scheduler-worker
+  namespace: harmoniq-scheduler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scheduler-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

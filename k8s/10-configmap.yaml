@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scheduler-config
+  namespace: harmoniq-scheduler
+data:
+  REDIS_URL: "redis://redis:6379"
+  REDIS_BROKER_DB: "3"
+  REDIS_RESULT_DB: "4"
+  REDIS_BEAT_DB: "5"
+  SCHEDULER_APP_NAME: "harmoniq_scheduler"
+  WEBHOOK_HTTP_TIMEOUT: "30"
+  LOG_LEVEL: "INFO"

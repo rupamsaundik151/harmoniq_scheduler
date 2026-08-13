@@ -1,0 +1,42 @@
+# Single-replica Redis for demo. Production should use a managed
+# Redis with persistence + failover (ElastiCache / Memorystore / Redis
+# Enterprise). If Redis goes down all in-flight schedules are lost —
+# that's why the README says: keep an authoritative copy of every
+# schedule in your source-of-truth DB and rehydrate on Redis restart.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: harmoniq-scheduler
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: harmoniq-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
