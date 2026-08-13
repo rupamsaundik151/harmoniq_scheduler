@@ -16,6 +16,8 @@ class Schedule(Base):
     schedule_type = Column(String, nullable=False)
     run_at = Column(DateTime(timezone=True), nullable=True)
     cron_expression = Column(String, nullable=True)
+    starts_at = Column(DateTime(timezone=True), nullable=True)
+    ends_at = Column(DateTime(timezone=True), nullable=True)
 
     tags = Column(JSON, nullable=True)
 
