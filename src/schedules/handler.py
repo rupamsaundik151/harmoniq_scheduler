@@ -30,11 +30,17 @@ def _ensure_utc(dt: datetime) -> datetime:
 
 
 def _runner_kwargs(schedule: Schedule) -> dict:
-    return {
+    kwargs = {
         "schedule_id": schedule.id,
         "path": schedule.path,
         "payload": schedule.payload,
     }
+    if schedule.schedule_type == "cron":
+        if schedule.starts_at is not None:
+            kwargs["starts_at"] = _ensure_utc(schedule.starts_at).isoformat()
+        if schedule.ends_at is not None:
+            kwargs["ends_at"] = _ensure_utc(schedule.ends_at).isoformat()
+    return kwargs
 
 
 def _register_with_scheduler(
@@ -90,6 +96,13 @@ async def create_schedule_handler(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+    starts_at = (
+        _ensure_utc(request.starts_at) if request.starts_at is not None else None
+    )
+    ends_at = (
+        _ensure_utc(request.ends_at) if request.ends_at is not None else None
+    )
+
     schedule = Schedule(
         id=schedule_id,
         path=request.path,
@@ -97,6 +110,8 @@ async def create_schedule_handler(
         schedule_type=request.schedule_type,
         run_at=run_at,
         cron_expression=request.cron_expression,
+        starts_at=starts_at,
+        ends_at=ends_at,
         tags=request.tags,
         status="active",
         is_active=True,
@@ -169,6 +184,8 @@ async def update_schedule_handler(
                 detail="`run_at` is required for onetime schedules.",
             )
         schedule.cron_expression = None
+        schedule.starts_at = None
+        schedule.ends_at = None
         schedule.run_at = _ensure_utc(schedule.run_at)
     elif schedule.schedule_type == "cron":
         if not schedule.cron_expression:
@@ -177,6 +194,19 @@ async def update_schedule_handler(
                 detail="`cron_expression` is required for cron schedules.",
             )
         schedule.run_at = None
+        if schedule.starts_at is not None:
+            schedule.starts_at = _ensure_utc(schedule.starts_at)
+        if schedule.ends_at is not None:
+            schedule.ends_at = _ensure_utc(schedule.ends_at)
+        if (
+            schedule.starts_at is not None
+            and schedule.ends_at is not None
+            and schedule.ends_at <= schedule.starts_at
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="`ends_at` must be after `starts_at`.",
+            )
 
     scheduler = _get_scheduler()
     enabled = schedule.status != "paused"

@@ -2,6 +2,7 @@ import os
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from .base import Base
 
@@ -16,7 +17,9 @@ def _database_url() -> str:
     return url
 
 
-engine = create_async_engine(_database_url(), echo=False, future=True)
+engine = create_async_engine(
+    _database_url(), echo=False, future=True, poolclass=NullPool
+)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine, class_=AsyncSession, expire_on_commit=False

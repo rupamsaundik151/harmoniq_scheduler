@@ -14,6 +14,8 @@ class CreateScheduleRequest(BaseModel):
     schedule_type: ScheduleType
     run_at: Optional[datetime] = None
     cron_expression: Optional[str] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
     tags: Optional[dict[str, Any]] = None
 
     @field_validator("path")
@@ -35,6 +37,10 @@ class CreateScheduleRequest(BaseModel):
                 raise ValueError(
                     "`cron_expression` must be omitted when schedule_type='onetime'."
                 )
+            if self.starts_at is not None or self.ends_at is not None:
+                raise ValueError(
+                    "`starts_at`/`ends_at` are only for schedule_type='cron'."
+                )
         elif self.schedule_type == "cron":
             if not self.cron_expression:
                 raise ValueError(
@@ -44,6 +50,12 @@ class CreateScheduleRequest(BaseModel):
                 raise ValueError(
                     "`run_at` must be omitted when schedule_type='cron'."
                 )
+            if (
+                self.starts_at is not None
+                and self.ends_at is not None
+                and self.ends_at <= self.starts_at
+            ):
+                raise ValueError("`ends_at` must be after `starts_at`.")
         return self
 
 
@@ -53,6 +65,8 @@ class UpdateScheduleRequest(BaseModel):
     schedule_type: Optional[ScheduleType] = None
     run_at: Optional[datetime] = None
     cron_expression: Optional[str] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
     tags: Optional[dict[str, Any]] = None
 
     @field_validator("path")
@@ -77,6 +91,8 @@ class ScheduleResponse(BaseModel):
     schedule_type: ScheduleType
     run_at: Optional[datetime] = None
     cron_expression: Optional[str] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
     tags: Optional[dict[str, Any]] = None
     status: ScheduleStatus
     last_run: Optional[datetime] = None
