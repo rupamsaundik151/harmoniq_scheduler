@@ -8,11 +8,13 @@ from .handler import (
     get_schedule_handler,
     list_schedules_handler,
     pause_schedule_handler,
+    reschedule_handler,
     resume_schedule_handler,
     update_schedule_handler,
 )
 from .schema import (
     CreateScheduleRequest,
+    RescheduleRequest,
     ScheduleResponse,
     UpdateScheduleRequest,
 )
@@ -53,6 +55,15 @@ async def update_schedule(
 @router.delete("/{schedule_id}")
 async def delete_schedule(schedule_id: str, db: AsyncSession = Depends(get_db)):
     return await delete_schedule_handler(schedule_id, db)
+
+
+@router.post("/{schedule_id}/reschedule", response_model=ScheduleResponse)
+async def reschedule(
+    schedule_id: str,
+    body: RescheduleRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ScheduleResponse:
+    return await reschedule_handler(schedule_id, body, db)
 
 
 @router.post("/{schedule_id}/pause", response_model=ScheduleResponse)

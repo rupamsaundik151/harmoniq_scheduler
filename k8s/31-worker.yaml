@@ -23,7 +23,7 @@ spec:
           command:
             - celery
             - -A
-            - src.celery.celery_instance
+            - harmoniq_scheduler.celery.celery_instance
             - worker
             - --loglevel=info
             - --concurrency=4
@@ -39,7 +39,7 @@ spec:
               command:
                 - sh
                 - -c
-                - celery -A src.celery.celery_instance inspect ping -d celery@$HOSTNAME
+                - celery -A harmoniq_scheduler.celery.celery_instance inspect ping -d celery@$HOSTNAME
             initialDelaySeconds: 30
             periodSeconds: 60
             timeoutSeconds: 10

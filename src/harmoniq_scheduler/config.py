@@ -25,7 +25,7 @@ def config_from_env() -> SchedulerConfig:
         broker_db=int(os.getenv("REDIS_BROKER_DB", "3")),
         result_db=int(os.getenv("REDIS_RESULT_DB", "4")),
         beat_db=int(os.getenv("REDIS_BEAT_DB", "5")),
-        task_modules=["src.celery.tasks"],
+        task_modules=["harmoniq_scheduler.celery.tasks"],
         webhook_http_timeout=float(os.getenv("WEBHOOK_HTTP_TIMEOUT", "30")),
         common_service_url=os.getenv("COMMON_SERVICE_URL", ""),
     )

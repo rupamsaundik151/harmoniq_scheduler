@@ -33,7 +33,7 @@ spec:
           command:
             - celery
             - -A
-            - src.celery.celery_instance
+            - harmoniq_scheduler.celery.celery_instance
             - beat
             - --loglevel=info
           envFrom:
