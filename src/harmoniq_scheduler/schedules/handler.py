@@ -10,13 +10,14 @@ from ..database import Schedule
 from ..scheduler import Scheduler
 from .schema import (
     CreateScheduleRequest,
+    RescheduleRequest,
     ScheduleResponse,
     UpdateScheduleRequest,
 )
 
 logger = logging.getLogger(__name__)
 
-_RUNNER_TASK_NAME = "src.celery.tasks.dispatch_webhook"
+_RUNNER_TASK_NAME = "harmoniq_scheduler.celery.tasks.dispatch_webhook"
 
 
 def _get_scheduler() -> Scheduler:
@@ -103,6 +104,19 @@ async def create_schedule_handler(
         _ensure_utc(request.ends_at) if request.ends_at is not None else None
     )
 
+    if request.schedule_type == "cron":
+        now = datetime.now(timezone.utc)
+        if starts_at is not None and starts_at <= now:
+            raise HTTPException(
+                status_code=400,
+                detail="`starts_at` must be in the future.",
+            )
+        if ends_at is not None and ends_at <= now:
+            raise HTTPException(
+                status_code=400,
+                detail="`ends_at` must be in the future.",
+            )
+
     schedule = Schedule(
         id=schedule_id,
         path=request.path,
@@ -172,7 +186,17 @@ async def update_schedule_handler(
     if schedule is None:
         raise HTTPException(status_code=404, detail="Schedule not found.")
 
+    if schedule.status == "ended":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Schedule has already ended (run time is gone). "
+                "Please reschedule it (POST /{id}/reschedule) instead."
+            ),
+        )
+
     update_data = request.model_dump(exclude_unset=True)
+    old_type = schedule.schedule_type
 
     for field_name, value in update_data.items():
         setattr(schedule, field_name, value)
@@ -198,6 +222,25 @@ async def update_schedule_handler(
             schedule.starts_at = _ensure_utc(schedule.starts_at)
         if schedule.ends_at is not None:
             schedule.ends_at = _ensure_utc(schedule.ends_at)
+        now = datetime.now(timezone.utc)
+        if (
+            "starts_at" in update_data
+            and schedule.starts_at is not None
+            and schedule.starts_at <= now
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="`starts_at` must be in the future.",
+            )
+        if (
+            "ends_at" in update_data
+            and schedule.ends_at is not None
+            and schedule.ends_at <= now
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="`ends_at` must be in the future.",
+            )
         if (
             schedule.starts_at is not None
             and schedule.ends_at is not None
@@ -210,9 +253,14 @@ async def update_schedule_handler(
 
     scheduler = _get_scheduler()
     enabled = schedule.status != "paused"
+    type_changed = old_type != schedule.schedule_type
 
     try:
-        if schedule.schedule_type == "onetime":
+        if type_changed:
+            scheduler.delete_schedule(schedule_id)
+            celery_app.control.revoke(schedule_id, terminate=False)
+            _register_with_scheduler(scheduler, schedule, enabled=enabled)
+        elif schedule.schedule_type == "onetime":
             scheduler.update_onetime_schedule(
                 schedule_id=schedule.id,
                 task_name=_RUNNER_TASK_NAME,
@@ -276,12 +324,53 @@ async def delete_schedule_handler(schedule_id: str, db: AsyncSession) -> dict:
     return {"message": "Schedule deleted."}
 
 
+async def reschedule_handler(
+    schedule_id: str,
+    request: RescheduleRequest,
+    db: AsyncSession,
+) -> ScheduleResponse:
+    existing = await db.get(Schedule, schedule_id)
+    if existing is not None:
+        try:
+            await db.delete(existing)
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to remove existing schedule row: {e}",
+            ) from e
+
+        scheduler = _get_scheduler()
+        try:
+            scheduler.delete_schedule(schedule_id)
+        except Exception:
+            logger.exception(
+                "reschedule: scheduler cleanup failed after DB delete",
+                extra={"schedule_id": schedule_id},
+            )
+
+    create_request = CreateScheduleRequest(
+        id=schedule_id,
+        **request.model_dump(),
+    )
+    return await create_schedule_handler(create_request, db)
+
+
 async def pause_schedule_handler(
     schedule_id: str, db: AsyncSession
 ) -> ScheduleResponse:
     schedule = await db.get(Schedule, schedule_id)
     if schedule is None:
         raise HTTPException(status_code=404, detail="Schedule not found.")
+    if schedule.status == "ended":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Schedule has already ended (run time is gone). "
+                "Please reschedule it (POST /{id}/reschedule) instead."
+            ),
+        )
     if schedule.status == "paused":
         return ScheduleResponse.model_validate(schedule)
 

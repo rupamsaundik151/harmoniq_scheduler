@@ -91,7 +91,7 @@ def _delete_beat_entry(schedule_id: str) -> None:
 
 
 @celery_app.task(
-    name="src.celery.tasks.dispatch_webhook",
+    name="harmoniq_scheduler.celery.tasks.dispatch_webhook",
     bind=True,
     autoretry_for=(httpx.HTTPError,),
     retry_backoff=True,
