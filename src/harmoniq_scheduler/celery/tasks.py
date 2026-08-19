@@ -31,6 +31,15 @@ _FIXED_HEADERS = {
 }
 
 
+async def _schedule_is_live(schedule_id: str) -> bool:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Schedule).where(Schedule.id == schedule_id)
+        )
+        schedule = result.scalar_one_or_none()
+        return schedule is not None and bool(schedule.is_active)
+
+
 async def _mark_schedule_fired(schedule_id: str) -> None:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -63,6 +72,20 @@ async def _mark_schedule_ended(schedule_id: str) -> None:
         await session.commit()
 
 
+async def _end_if_onetime(schedule_id: str) -> bool:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Schedule).where(Schedule.id == schedule_id)
+        )
+        schedule = result.scalar_one_or_none()
+        if schedule is None or schedule.schedule_type != "onetime":
+            return False
+        schedule.status = "ended"
+        schedule.is_active = False
+        await session.commit()
+        return True
+
+
 def _parse_window_bound(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -90,8 +113,32 @@ def _delete_beat_entry(schedule_id: str) -> None:
         )
 
 
+class WebhookTask(celery_app.Task):
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        schedule_id = kwargs.get("schedule_id")
+        if not schedule_id and args:
+            schedule_id = args[0]
+        if not schedule_id:
+            return
+        try:
+            ended = asyncio.run(_end_if_onetime(schedule_id))
+        except Exception:
+            logger.exception(
+                "on_failure: _end_if_onetime failed",
+                extra={"schedule_id": schedule_id, "task_id": task_id},
+            )
+            return
+        if ended:
+            _delete_beat_entry(schedule_id)
+            logger.warning(
+                "dispatch_webhook: onetime task failed permanently — schedule ended",
+                extra={"schedule_id": schedule_id, "task_id": task_id},
+            )
+
+
 @celery_app.task(
     name="harmoniq_scheduler.celery.tasks.dispatch_webhook",
+    base=WebhookTask,
     bind=True,
     autoretry_for=(httpx.HTTPError,),
     retry_backoff=True,
@@ -107,6 +154,30 @@ def dispatch_webhook(
     starts_at: Optional[str] = None,
     ends_at: Optional[str] = None,
 ) -> dict:
+    # Guard against orphan fires: the schedule row may have been deleted or
+    # paused after this message was queued. Skip the outbound HTTP call
+    # entirely so the target service never sees an action for a cancelled
+    # schedule.
+    try:
+        live = asyncio.run(_schedule_is_live(schedule_id))
+    except Exception:
+        logger.exception(
+            "dispatch_webhook: live-check failed — skipping (no retry)",
+            extra={"schedule_id": schedule_id, "path": path},
+        )
+        return {
+            "status_code": None,
+            "path": path,
+            "skipped": "live_check_failed",
+        }
+
+    if not live:
+        logger.info(
+            "dispatch_webhook: schedule not live — skipping (no retry)",
+            extra={"schedule_id": schedule_id, "path": path},
+        )
+        return {"status_code": None, "path": path, "skipped": "orphan"}
+
     now = datetime.now(timezone.utc)
     starts_at_dt = _parse_window_bound(starts_at)
     ends_at_dt = _parse_window_bound(ends_at)
